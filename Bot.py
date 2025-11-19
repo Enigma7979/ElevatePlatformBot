@@ -11,8 +11,7 @@ import asyncio
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-import psycopg2
-from psycopg2.extras import RealDictCursor
+import sqlite3
 import sys
 
 print("🚀 Starting Elevate Platform Bot on Railway...")
@@ -27,22 +26,13 @@ EMAIL_PORT = os.environ.get('EMAIL_PORT')
 EMAIL_USER = os.environ.get('EMAIL_USER')
 EMAIL_PASSWORD = os.environ.get('EMAIL_PASSWORD')
 
-# Database configuration for Railway
-DATABASE_URL = os.environ.get('DATABASE_URL')
-
 # ✅ Check essential keys
 if not BOT_TOKEN:
     print("❌ ERROR: Missing BOT_TOKEN in Environment Variables")
     print("ℹ️ Please add BOT_TOKEN to Railway Variables")
     sys.exit(1)
 
-if not DATABASE_URL:
-    print("❌ ERROR: Missing DATABASE_URL in Environment Variables")
-    print("ℹ️ Railway should provide DATABASE_URL automatically")
-    sys.exit(1)
-
 print("✅ Bot Token: Loaded successfully")
-print("✅ Database URL: Loaded successfully")
 
 # Check email settings
 if EMAIL_HOST and EMAIL_PORT and EMAIL_USER and EMAIL_PASSWORD:
@@ -69,11 +59,12 @@ AVAILABLE_TIMES = ['10:00', '11:00', '14:00', '15:00', '16:00']
 CONSULTATION_DURATION_MINUTES = 30
 TIMEZONE = 'Europe/Brussels'  # Belgium timezone
 
-# 🗄️ PostgreSQL Connection Helper - UPDATED FOR RAILWAY
+# 🗄️ SQLite Database Connection Helper
 def get_db_connection():
-    """Get PostgreSQL database connection for Railway"""
+    """Get SQLite database connection"""
     try:
-        conn = psycopg2.connect(DATABASE_URL, sslmode='require')
+        conn = sqlite3.connect('elevate_bot.db')
+        conn.row_factory = sqlite3.Row
         return conn
     except Exception as e:
         print(f"❌ Database connection error: {e}")
@@ -119,9 +110,9 @@ POPULAR_CURRENCIES = [
     {'code': 'PHP', 'name_en': 'Philippine Peso', 'name_ar': 'بيزو فلبيني', 'flag': '🇵🇭'},
 ]
 
-# 📅 Database Functions for Bookings - UPDATED FOR RAILWAY
+# 📅 Database Functions for Bookings - UPDATED FOR SQLite
 def init_bookings_db():
-    """Initialize bookings database on Railway"""
+    """Initialize bookings database with SQLite"""
     conn = get_db_connection()
     if not conn:
         print("❌ Failed to initialize database - no connection")
@@ -133,7 +124,7 @@ def init_bookings_db():
         # Table for consultation bookings
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS bookings (
-                id SERIAL PRIMARY KEY,
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
                 name TEXT NOT NULL,
                 email TEXT NOT NULL,
@@ -151,7 +142,7 @@ def init_bookings_db():
         # Table for report requests (5 EUR detailed reports)
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS report_requests (
-                id SERIAL PRIMARY KEY,
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
                 name TEXT NOT NULL,
                 email TEXT NOT NULL,
@@ -169,7 +160,7 @@ def init_bookings_db():
         # Table for CV & Cover Letter requests
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS cv_requests (
-                id SERIAL PRIMARY KEY,
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
                 request_type TEXT NOT NULL,
                 full_name TEXT NOT NULL,
@@ -197,7 +188,7 @@ def init_bookings_db():
         # Table for AI sessions (Free AI Assistant tracking)
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS ai_sessions (
-                id SERIAL PRIMARY KEY,
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
                 telegram_username TEXT,
                 first_name TEXT,
@@ -216,7 +207,7 @@ def init_bookings_db():
         # Table for user activity
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS user_activity (
-                id SERIAL PRIMARY KEY,
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
                 telegram_username TEXT,
                 first_name TEXT,
@@ -244,7 +235,7 @@ def check_slot_available(date, time):
         cursor = conn.cursor()
         cursor.execute('''
             SELECT COUNT(*) FROM bookings 
-            WHERE booking_date = %s AND booking_time = %s AND status != 'cancelled'
+            WHERE booking_date = ? AND booking_time = ? AND status != 'cancelled'
         ''', (date, time))
         count = cursor.fetchone()[0]
         return count == 0
@@ -267,10 +258,9 @@ def save_booking(user_id, name, email, service_type, country, booking_date, book
         
         cursor.execute('''
             INSERT INTO bookings (user_id, name, email, service_type, country, booking_date, booking_time, payment_method, created_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-            RETURNING id
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (user_id, name, email, service_type, country, booking_date, booking_time, payment_method, created_at))
-        booking_id = cursor.fetchone()[0]
+        booking_id = cursor.lastrowid
         conn.commit()
         print(f"💾 Booking saved: ID={booking_id}, Date={booking_date}, Time={booking_time}, User={name}")
         return booking_id
@@ -293,10 +283,9 @@ def save_report_request(user_id, name, email, country, service_type, conversatio
         
         cursor.execute('''
             INSERT INTO report_requests (user_id, name, email, country, service_type, conversation_summary, payment_method, created_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-            RETURNING id
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ''', (user_id, name, email, country, service_type, conversation_summary, payment_method, created_at))
-        request_id = cursor.fetchone()[0]
+        request_id = cursor.lastrowid
         conn.commit()
         print(f"💾 Report request saved: ID={request_id}, User={name}, Email={email}")
         return request_id
@@ -316,7 +305,7 @@ def get_user_booking(user_id):
         cursor = conn.cursor()
         cursor.execute('''
             SELECT * FROM bookings 
-            WHERE user_id = %s AND status = 'pending'
+            WHERE user_id = ? AND status = 'pending'
             ORDER BY created_at DESC LIMIT 1
         ''', (user_id,))
         booking = cursor.fetchone()
@@ -340,10 +329,9 @@ def create_ai_session(user_id, telegram_username, first_name, language, country,
         
         cursor.execute('''
             INSERT INTO ai_sessions (user_id, telegram_username, first_name, language, country, service_type, started_at, question_count, last_message_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, 0, %s)
-            RETURNING id
+            VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)
         ''', (user_id, telegram_username, first_name, language, country, service_type, started_at, started_at))
-        session_id = cursor.fetchone()[0]
+        session_id = cursor.lastrowid
         conn.commit()
         print(f"💾 AI Session created: ID={session_id}, User={first_name} ({user_id}), Country={country}")
         return session_id
@@ -366,10 +354,10 @@ def update_ai_session(user_id, question_count):
         
         cursor.execute('''
             UPDATE ai_sessions 
-            SET question_count = %s, last_message_at = %s
+            SET question_count = ?, last_message_at = ?
             WHERE id = (
                 SELECT id FROM ai_sessions 
-                WHERE user_id = %s AND completed_at IS NULL
+                WHERE user_id = ? AND completed_at IS NULL
                 ORDER BY started_at DESC
                 LIMIT 1
             )
@@ -393,10 +381,10 @@ def mark_session_completed(user_id):
         
         cursor.execute('''
             UPDATE ai_sessions 
-            SET completed_at = %s
+            SET completed_at = ?
             WHERE id = (
                 SELECT id FROM ai_sessions 
-                WHERE user_id = %s AND completed_at IS NULL
+                WHERE user_id = ? AND completed_at IS NULL
                 ORDER BY started_at DESC
                 LIMIT 1
             )
@@ -418,10 +406,10 @@ def mark_report_requested(user_id, report_email):
         
         cursor.execute('''
             UPDATE ai_sessions 
-            SET report_requested = TRUE, report_email = %s
+            SET report_requested = TRUE, report_email = ?
             WHERE id = (
                 SELECT id FROM ai_sessions 
-                WHERE user_id = %s AND completed_at IS NULL
+                WHERE user_id = ? AND completed_at IS NULL
                 ORDER BY started_at DESC
                 LIMIT 1
             )
@@ -443,7 +431,7 @@ def get_active_session(user_id):
         cursor = conn.cursor()
         cursor.execute('''
             SELECT * FROM ai_sessions 
-            WHERE user_id = %s AND completed_at IS NULL
+            WHERE user_id = ? AND completed_at IS NULL
             ORDER BY started_at DESC LIMIT 1
         ''', (user_id,))
         session = cursor.fetchone()
@@ -467,7 +455,7 @@ def track_user_activity(user_id, telegram_username, first_name, action_type, act
         
         cursor.execute('''
             INSERT INTO user_activity (user_id, telegram_username, first_name, action_type, action_details, timestamp)
-            VALUES (%s, %s, %s, %s, %s, %s)
+            VALUES (?, ?, ?, ?, ?, ?)
         ''', (user_id, telegram_username, first_name, action_type, action_details, timestamp))
         conn.commit()
     except Exception as e:
@@ -3785,10 +3773,9 @@ async def handle_cv_data_collection(update, state, user_message):
         cursor.execute('''
             INSERT INTO cv_requests (user_id, request_type, full_name, email, work_experience, 
                                     payment_method, created_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
-            RETURNING id
+            VALUES (?, ?, ?, ?, ?, ?, ?)
         ''', (user_id, cv_type, user_name, email, user_message, 'pending', created_at))
-        request_id = cursor.fetchone()[0]
+        request_id = cursor.lastrowid
         conn.commit()
         print(f"💾 CV Request saved: ID={request_id}, Type={cv_type}, User={user_name}")
     except Exception as e:
