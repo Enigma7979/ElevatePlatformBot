@@ -1,8 +1,12 @@
-{
+echo '{
   "build": {
-    "builder": "DOCKERFILE"
+    "builder": "NIXPACKS"
   },
   "deploy": {
-    "numReplicas": 1
+    "startCommand": "python Bot.py"
   }
-}
+}' > railway.json
+
+git add railway.json
+git commit -m "fix: correct filename to Bot.py"
+git push
