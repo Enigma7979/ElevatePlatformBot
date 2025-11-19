@@ -3,6 +3,6 @@
     "builder": "NIXPACKS"
   },
   "deploy": {
-    "startCommand": "cd telegram-bot && python bot.py"
+    "startCommand": "python bot.py"
   }
 }
